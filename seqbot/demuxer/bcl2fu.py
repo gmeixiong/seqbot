@@ -215,10 +215,10 @@ def main(logger):
                             <= get_cycle(cfn)
                             < args.index_cycle_end)
 
-    cbcl_file_lists = [
-        (lane, tuple(cfn for cfn in cbcl_file_lists[lane] if in_range(cfn)))
+    cbcl_file_lists = {
+        lane:tuple(cfn for cfn in cbcl_file_lists[lane] if in_range(cfn))
         for lane in cbcl_file_lists
-    ]
+    }
 
     logger.info('{} CBCL files to read'.format(
             sum(map(len, cbcl_file_lists.values())))
@@ -229,14 +229,16 @@ def main(logger):
 
     cbcl_number_of_tiles = list()
 
-    for lane, cbcl_fl in cbcl_file_lists:
-        logger.info('reading headers for {} files'.format(len(cbcl_fl)))
-        logger.debug('\n\t{}'.format('\n\t'.join(cbcl_fl)))
+    for lane in sorted(cbcl_file_lists):
+        logger.info('reading headers for {} files'.format(
+                len(cbcl_file_lists[lane]))
+        )
+        logger.debug('\n\t{}'.format('\n\t'.join(cbcl_file_lists[lane])))
 
-        cbcl_data[lane].update(read_cbcl_data(cbcl_fl))
+        cbcl_data[lane].update(read_cbcl_data(cbcl_file_lists[lane]))
 
         number_of_tiles = {cbcl_data[lane][fn].number_of_tile_records
-                           for fn in cbcl_fl}
+                           for fn in cbcl_file_lists[lane]}
 
         assert len(number_of_tiles) == 1
 
