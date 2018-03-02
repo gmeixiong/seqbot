@@ -120,7 +120,7 @@ def read_cbcl_filters(filter_files):
 
 def get_byte_lists(cbcl_files, lane, tile_i):
     for fn in cbcl_files:
-        ci = cbcl_data[fn]
+        ci = cbcl_data[lane][fn]
         cf = cbcl_filter_data[lane][ci.tile_offsets[tile_i, 0]]
 
         with open(fn, 'rb') as f:
@@ -185,8 +185,8 @@ def main(logger):
 
     args = parser.parse_args()
 
-    cbcl_file_lists = defaultdict(list)
-    cbcl_filter_lists = defaultdict(dict)
+    cbcl_file_lists = dict()
+    cbcl_filter_lists = dict()
 
     for lane in (1, 2, 3, 4):
         for part in itertools.count(1):
@@ -197,7 +197,7 @@ def main(logger):
             )
             if cbcl_files:
                 cbcl_files.sort(key=get_cycle)
-                cbcl_file_lists[lane].extend(cbcl_files)
+                cbcl_file_lists[lane, part] = cbcl_files
             else:
                 break
 
@@ -216,8 +216,9 @@ def main(logger):
                             < args.index_cycle_end)
 
     cbcl_file_lists = {
-        lane:tuple(cfn for cfn in cbcl_file_lists[lane] if in_range(cfn))
-        for lane in cbcl_file_lists
+        (lane, part):tuple(cfn for cfn in cbcl_file_lists[lane, part]
+                           if in_range(cfn))
+        for lane,part in cbcl_file_lists
     }
 
     logger.info('{} CBCL files to read'.format(
@@ -229,16 +230,18 @@ def main(logger):
 
     cbcl_number_of_tiles = list()
 
-    for lane in sorted(cbcl_file_lists):
-        logger.info('reading headers for {} files'.format(
-                len(cbcl_file_lists[lane]))
-        )
-        logger.debug('\n\t{}'.format('\n\t'.join(cbcl_file_lists[lane])))
+    lane_parts = sorted(cbcl_file_lists)
 
-        cbcl_data[lane].update(read_cbcl_data(cbcl_file_lists[lane]))
+    for lane,part in lane_parts:
+        logger.info('reading headers for {} files'.format(
+                len(cbcl_file_lists[lane, part]))
+        )
+        logger.debug('\n\t{}'.format('\n\t'.join(cbcl_file_lists[lane, part])))
+
+        cbcl_data[lane].update(read_cbcl_data(cbcl_file_lists[lane, part]))
 
         number_of_tiles = {cbcl_data[lane][fn].number_of_tile_records
-                           for fn in cbcl_file_lists[lane]}
+                           for fn in cbcl_file_lists[lane, part]}
 
         assert len(number_of_tiles) == 1
 
@@ -268,15 +271,13 @@ def main(logger):
         map(itertools.repeat, s, itertools.repeat(args.n_threads))
     )
 
-    lanes = sorted(cbcl_data)
-
     # using imap_unordered to (maybe) keep memory usage low in the main thread
     try:
         pool.imap_unordered(
                 read_tiles,
                 zip(
-                        rep_n(lanes),
-                        rep_n(cbcl_file_lists[lane] for lane in lanes),
+                        rep_n(lane for lane,part in lane_parts),
+                        rep_n(cbcl_file_lists[lane, part] for lane,part in lane_parts),
                         itertools.cycle(range(args.n_threads)),
                         itertools.repeat(args.n_threads),
                         rep_n(cbcl_number_of_tiles),
