@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import argparse
 import glob
 import gzip
 import io
@@ -28,50 +27,6 @@ get_cycle = lambda cfn: int(os.path.basename(os.path.dirname(cfn))[1:-2])
 get_part = lambda cfn: int(os.path.basename(cfn)[2])
 get_tile = lambda cfn: int(os.path.basename(cfn)[4:8])
 
-
-def get_logger(name):
-    logging.basicConfig(level=logging.DEBUG)
-    logger = logging.getLogger(name)
-
-    stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.INFO)
-
-    # create a logging format
-    formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    stream_handler.setFormatter(formatter)
-
-    logger.addHandler(stream_handler)
-
-    log_file = os.path.abspath('{}.log'.format(name))
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
-
-    # add the handlers to the logger
-    logger.addHandler(file_handler)
-
-    return logger, log_file, file_handler
-
-
-def get_parser():
-    parser = argparse.ArgumentParser(
-            prog='bcl2fu.py',
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
-
-    parser.add_argument('--loglevel', type=int, default=logging.DEBUG)
-    parser.add_argument('--n_threads', type=int, default=mp.cpu_count())
-
-    parser.add_argument('--bcl_path', required=True)
-    parser.add_argument('--output_dir', required=True)
-
-    parser.add_argument('--index_cycle_start', required=True, type=int)
-    parser.add_argument('--index_cycle_end', required=True, type=int)
-
-    return parser
 
 
 def read_cbcl_data(cbcl_files):
@@ -118,6 +73,35 @@ def read_cbcl_filters(filter_files):
     return cbcl_filters
 
 
+def cbcl_globber(bcl_path):
+    cbcl_file_lists = dict()
+    cbcl_filter_lists = dict()
+
+    for lane in (1, 2, 3, 4):
+        for part in itertools.count(1):
+            cbcl_files = glob.glob(
+                    os.path.join(bcl_path, 'Data', 'Intensities', 'BaseCalls',
+                                 'L00{}'.format(lane), 'C*.1',
+                                 'L00{}_{}.cbcl'.format(lane, part))
+            )
+            if cbcl_files:
+                cbcl_files.sort(key=get_cycle)
+                cbcl_file_lists[lane, part] = cbcl_files
+            else:
+                break
+
+        cbcl_filter_list = glob.glob(
+                os.path.join(args.bcl_path, 'Data', 'Intensities', 'BaseCalls',
+                             'L00{}'.format(lane),
+                             's_{}_*.filter'.format(lane))
+        )
+
+        cbcl_filter_list.sort(key=get_tile)
+        cbcl_filter_lists[lane] = cbcl_filter_list
+
+    return cbcl_file_lists, cbcl_filter_lists
+
+
 def get_byte_lists(cbcl_files, lane, tile_i):
     for fn in cbcl_files:
         ci = cbcl_data[lane][fn]
@@ -135,49 +119,34 @@ def get_byte_lists(cbcl_files, lane, tile_i):
                 yield None
                 continue
 
-            if ci.non_PF_clusters_excluded:
-                yield np.hstack(((byte_array & 0b11),
-                                 (byte_array >> 4 & 0b11)))
+            if ci.non_PF_clusters_excluded and cf.sum() % 2:
+                yield np.hstack(
+                        ((byte_array & 0b11)[:-1], (byte_array >> 4 & 0b11))
+                )
+            elif ci.non_PF_clusters_excluded:
+                yield np.hstack(
+                        ((byte_array & 0b11), (byte_array >> 4 & 0b11))
+                )
             else:
                 yield np.hstack(((byte_array & 0b11)[cf[::2]],
                                  (byte_array >> 4 & 0b11)[cf[1::2]]))
 
 
-def read_tiles(args):
-    try:
-        lane, cbcl_files, i, nproc, n_tiles, out_file = args
+def extract_reads(cbcl_files, lane, i, nproc, n_tiles):
+    for ii in range(i, n_tiles, nproc):
+        ba_generator = enumerate(get_byte_lists(cbcl_files, lane, ii))
+        j, byte_array = next(ba_generator)
 
-        print('starting pooljob with args: ({}..., {}, {}, {}, {})'.format(
-                cbcl_files[0], lane, i, nproc, n_tiles
-        ))
+        byte_matrix = 4 * np.ones((byte_array.shape[0], len(cbcl_files)),
+                                  dtype=np.uint8)
+        byte_matrix[:, j] = byte_array
 
-        read_counter = Counter()
+        for j, byte_array in ba_generator:
+            if byte_array is not None:
+                byte_matrix[:, j] = byte_array
 
-        for ii in range(i, n_tiles, nproc):
-            ba_generator = enumerate(get_byte_lists(cbcl_files, lane, ii))
-            j, byte_array = next(ba_generator)
-
-            byte_matrix = 4 * np.ones((byte_array.shape[0], len(cbcl_files)),
-                                      dtype=np.uint8)
-            byte_matrix[:, j] = byte_array
-
-            for j, byte_array in ba_generator:
-                if byte_array is not None:
-                    byte_matrix[:, j] = byte_array
-
-            read_counter += Counter(''.join('ACGTN'[b] for b in byte_matrix[k,:])
-                                    for k in range(byte_matrix.shape[0]))
-
-        print('pooljob done for args: ({}..., {}, {}, {}, {})'.format(
-                cbcl_files[0], lane, i, nproc, n_tiles
-        ))
-
-        print('writing to {}'.format(out_file))
-        with gzip.open(out_file, 'w') as OUT:
-            for index in read_counter:
-                OUT.write('{}\t{}\n'.format(index, read_counter[index]).encode())
-    except Exception as detail:
-        print("encountered exception in process:", detail)
+        yield from (''.join('ACGTN'[b] for b in byte_matrix[k, :])
+                    for k in range(byte_matrix.shape[0]))
 
 
 def main(logger):
@@ -185,31 +154,7 @@ def main(logger):
 
     args = parser.parse_args()
 
-    cbcl_file_lists = dict()
-    cbcl_filter_lists = dict()
-
-    for lane in (1, 2, 3, 4):
-        for part in itertools.count(1):
-            cbcl_files = glob.glob(
-                    os.path.join(args.bcl_path, 'Data', 'Intensities', 'BaseCalls',
-                                 'L00{}'.format(lane), 'C*.1',
-                                 'L00{}_{}.cbcl'.format(lane, part))
-            )
-            if cbcl_files:
-                cbcl_files.sort(key=get_cycle)
-                cbcl_file_lists[lane, part] = cbcl_files
-            else:
-                break
-
-        cbcl_filter_list = glob.glob(
-                os.path.join(args.bcl_path, 'Data', 'Intensities', 'BaseCalls',
-                             'L00{}'.format(lane),
-                             's_{}_*.filter'.format(lane))
-
-        )
-
-        cbcl_filter_list.sort(key=get_tile)
-        cbcl_filter_lists[lane] = cbcl_filter_list
+    cbcl_file_lists, cbcl_filter_lists = cbcl_globber(args.bcl_path)
 
     in_range = lambda cfn: (args.index_cycle_start
                             <= get_cycle(cfn)
@@ -276,8 +221,8 @@ def main(logger):
         pool.imap_unordered(
                 read_tiles,
                 zip(
-                        rep_n(lane for lane,part in lane_parts),
                         rep_n(cbcl_file_lists[lane, part] for lane,part in lane_parts),
+                        rep_n(lane for lane, part in lane_parts),
                         itertools.cycle(range(args.n_threads)),
                         itertools.repeat(args.n_threads),
                         rep_n(cbcl_number_of_tiles),
@@ -291,14 +236,3 @@ def main(logger):
 
     logger.info('done!')
 
-
-if __name__ == "__main__":
-    mainlogger, log_file, file_handler = get_logger('bcl2fu')
-
-    try:
-        main(mainlogger)
-    except:
-        mainlogger.info("An exception occurred", exc_info=True)
-        raise
-    finally:
-        file_handler.close()

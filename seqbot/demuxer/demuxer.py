@@ -21,6 +21,7 @@ import time
 from logging.handlers import TimedRotatingFileHandler
 
 import boto3
+import gspread
 
 
 ROOT_DIR = '/mnt/SEQS'
