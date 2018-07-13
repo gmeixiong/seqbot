@@ -36,7 +36,7 @@ def get_parser():
     return parser
 
 
-def read_count_processor(args):
+def read_processor(args):
     cbcl_files, lane, i, nproc, n_tiles, out_file, log_queue = args
 
     try:
@@ -82,29 +82,16 @@ def main(logger):
     global cbcl_data
     global cbcl_filter_data
 
-    cbcl_number_of_tiles = list()
-
     lane_parts = sorted(cbcl_file_lists)
 
-    for lane,part in lane_parts:
-        logger.info('reading headers for {} files'.format(
-                len(cbcl_file_lists[lane, part]))
-        )
-        logger.debug('\n\t{}'.format('\n\t'.join(cbcl_file_lists[lane, part])))
-
-        cbcl_data[lane].update(read_cbcl_data(cbcl_file_lists[lane, part]))
-
-        number_of_tiles = {cbcl_data[lane][fn].number_of_tile_records
-                           for fn in cbcl_file_lists[lane, part]}
-
-        assert len(number_of_tiles) == 1
-
-        number_of_tiles = number_of_tiles.pop()
-
-        cbcl_number_of_tiles.append(number_of_tiles)
+    cbcl_number_of_tiles = bcl2fu.get_cbcl_data(
+            cbcl_data, cbcl_file_lists, lane_parts, logger
+    )
 
     for lane in cbcl_filter_lists:
-        cbcl_filter_data[lane].update(read_cbcl_filters(cbcl_filter_lists[lane]))
+        cbcl_filter_data[lane].update(
+                bcl2fu.read_cbcl_filters(cbcl_filter_lists[lane])
+        )
 
     logger.info('{} total tiles'.format(sum(cbcl_number_of_tiles)))
 
@@ -130,7 +117,7 @@ def main(logger):
     # using imap_unordered to (maybe) keep memory usage low in the main thread
     try:
         pool.imap_unordered(
-                read_tiles,
+                read_processor,
                 zip(
                         rep_n(cbcl_file_lists[lane, part] for lane,part in lane_parts),
                         rep_n(lane for lane, part in lane_parts),
@@ -152,7 +139,7 @@ def main(logger):
 
 
 if __name__ == "__main__":
-    mainlogger, log_file, file_handler = ut.get_logger('get_reads')
+    mainlogger, log_file, file_handler = ut.get_logger('read_extraction')
 
     try:
         main(mainlogger)

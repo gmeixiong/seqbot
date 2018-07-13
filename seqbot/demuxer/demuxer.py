@@ -1,12 +1,9 @@
 #!/usr/bin/env python
 
+
 # script to:
 #   - scan SEQS folders
 #   - check for completed runs
-#   - check for matching samplesheets
-#     - auto-batching the samplesheet if it's too long
-
-#   - to be done in reflow?
 #   - demultiplex the run
 #   - upload fastq files to S3 when completed
 
@@ -21,7 +18,6 @@ import time
 from logging.handlers import TimedRotatingFileHandler
 
 import boto3
-import gspread
 
 
 ROOT_DIR = '/mnt/SEQS'
@@ -34,6 +30,7 @@ SEQ_FILES = {'MiSeq-01'  : 'RTAComplete.txt',
 
 S3_BUCKET = 'czbiohub-seqbot'
 S3_BCL_DIR = 'bcl'
+S3_FASTQS_DIR = 'fastqs'
 
 # time to sleep between uploads
 SLEEPY_TIME = 0.001 # 1/1000th of a second between every file...
