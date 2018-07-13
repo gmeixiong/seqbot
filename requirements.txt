@@ -1,5 +1,5 @@
+awscli-cwlogs
 botocore
 boto3
-gspread
-oauth2client
-PyOpenSSL
+git+https://github.com/czbiohub/utilities
+numpy

@@ -12,7 +12,9 @@ from collections import defaultdict, Counter
 import multiprocessing as mp
 
 import seqbot.demuxer.bcl2fu as bcl2fu
-import seqbot.util as ut
+
+import utilities.logging as ut_log
+
 
 cbcl_data = defaultdict(dict)
 cbcl_filter_data = defaultdict(dict)
@@ -109,7 +111,7 @@ def main(logger):
 
     output_file = os.path.join(args.output_dir, 'index_counts_{}.txt.gz')
 
-    log_queue, log_thread = ut.get_thread_logger(logger)
+    log_queue, log_thread = ut_log.get_thread_logger(logger)
 
     # warning: gratuitous use of itertools module ahead! it's gonna be great
 
@@ -144,7 +146,7 @@ def main(logger):
 
 
 if __name__ == "__main__":
-    mainlogger, log_file, file_handler = ut.get_logger('count_barcodes')
+    mainlogger, log_file, file_handler = ut_log.get_logger('count_barcodes')
 
     try:
         main(mainlogger)

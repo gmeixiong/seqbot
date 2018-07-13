@@ -19,6 +19,9 @@ from logging.handlers import TimedRotatingFileHandler
 
 import boto3
 
+import utilities.logging as ut_log
+import utilities.s3_util as s3u
+
 
 ROOT_DIR = '/mnt/SEQS'
 SEQS = ['MiSeq-01', 'NextSeq-01', 'NovaSeq-01']
@@ -194,6 +197,6 @@ if __name__ == "__main__":
             len(updated_upload_set) - len(old_upload_set))
     )
     with open(upload_record_file, 'w') as OUT:
-        print >> OUT, '\n'.join(sorted(updated_upload_set))
+        print('\n'.join(sorted(updated_upload_set)), file=OUT)
 
     mainlogger.debug('wrote new record file')

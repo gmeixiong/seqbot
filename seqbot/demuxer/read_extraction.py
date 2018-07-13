@@ -12,7 +12,8 @@ from collections import defaultdict
 import multiprocessing as mp
 
 import seqbot.demuxer.bcl2fu as bcl2fu
-import seqbot.util as ut
+
+import utilities.logging as ut_log
 
 cbcl_data = defaultdict(dict)
 cbcl_filter_data = defaultdict(dict)
@@ -139,7 +140,7 @@ def main(logger):
 
 
 if __name__ == "__main__":
-    mainlogger, log_file, file_handler = ut.get_logger('read_extraction')
+    mainlogger, log_file, file_handler = ut_log.get_logger('read_extraction')
 
     try:
         main(mainlogger)
