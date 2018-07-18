@@ -13,7 +13,7 @@ import multiprocessing as mp
 
 import seqbot.demuxer.bcl2fu as bcl2fu
 
-import utilities.logging as ut_log
+import utilities.log_util as ut_log
 
 cbcl_data = defaultdict(dict)
 cbcl_filter_data = defaultdict(dict)
