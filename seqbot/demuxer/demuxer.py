@@ -8,9 +8,11 @@
 #   - upload fastq files to S3 when completed
 
 
+import csv
 import glob
 import logging
 import os
+import pathlib
 import subprocess
 import sys
 import time
@@ -19,11 +21,11 @@ from logging.handlers import TimedRotatingFileHandler
 
 import boto3
 
-import utilities.logging as ut_log
+import utilities.log_util as ut_log
 import utilities.s3_util as s3u
 
 
-ROOT_DIR = '/mnt/SEQS'
+root_dir = pathlib.Path('/mnt/SEQS')
 SEQS = ['MiSeq-01', 'NextSeq-01', 'NovaSeq-01']
 
 # I believe these are the correct files for each sequencer
@@ -32,11 +34,15 @@ SEQ_FILES = {'MiSeq-01'  : 'RTAComplete.txt',
              'NovaSeq-01': 'SequenceComplete.txt'}
 
 S3_BUCKET = 'czbiohub-seqbot'
-S3_BCL_DIR = 'bcl'
 S3_FASTQS_DIR = 'fastqs'
 
-# time to sleep between uploads
-SLEEPY_TIME = 0.001 # 1/1000th of a second between every file...
+
+
+sample_n = 384
+local_samplesheets = pathlib.Path('/home/seqbot/samplesheets')
+
+info_log_file = pathlib.Path('/home/seqbot/flexo_watcher.log')
+debug_log_file = pathlib.Path('/home/seqbot/flexo_debug.log')
 
 
 def maybe_exit_process():
@@ -59,144 +65,88 @@ def maybe_exit_process():
         time.sleep(5)
 
 
-def scan_dir(seq_dir, client, logger):
-    run_name = os.path.basename(seq_dir)
-    logger.info("Getting file list from {}".format(
-            os.path.join(S3_BUCKET, S3_BCL_DIR, run_name))
-    )
-
-    paginator = client.get_paginator('list_objects')
-    response_iterator = paginator.paginate(
-            Bucket=S3_BUCKET, Prefix=os.path.join(S3_BCL_DIR, run_name)
-    )
-
-    file_set = {r['Key'] for result in response_iterator
-                for r in result.get('Contents', [])}
-    logger.info("Found {} objects in {}".format(
-            len(file_set), os.path.join(S3_BUCKET, S3_BCL_DIR, run_name))
-    )
-
-    return file_set
-
-
-def main(logger, upload_set):
+def main(logger, fastq_folders, samplesheets):
     logger.debug("Creating S3 client")
     client = boto3.client('s3')
 
-    logger.info("Scanning {}...".format(ROOT_DIR))
-    total_uploads = 0
+    logger.info("Scanning {}...".format(root_dir))
 
     # for each sequencer, check for newly completed runs
     for seq in SEQS:
         logger.info(seq)
-        fns = glob.glob(os.path.join(ROOT_DIR, seq, '[0-9]*', SEQ_FILES[seq]))
-        logger.debug('{} ~complete runs in {}'.format(
-                len(fns), os.path.join(ROOT_DIR, seq))
-        )
+        fns = (root_dir / seq).glob(f'[0-9]*/{SEQ_FILES[seq]}')
+        logger.debug(f'{len(fns)} ~complete runs in {root_dir / seq}')
+
         for fn in fns:
-            seq_dir = os.path.dirname(fn)
-            if seq_dir in upload_set:
-                logger.debug('skipping {}, already uploaded'.format(seq_dir))
+            seq_dir = fn.parent
+            seq_base = seq_dir.name
+            if seq_dir.name in fastq_folders:
+                logger.debug(f'skipping {seq_dir.name}, already demuxed')
                 continue
 
-            if (seq != 'NovaSeq-01'
-                or os.path.exists(os.path.join(seq_dir, 'CopyComplete.txt'))):
-                    file_set = scan_dir(seq_dir, client, logger)
-                    logger.info('syncing {}'.format(seq_dir))
+            if seq != 'NovaSeq-01' or (seq_dir / 'CopyComplete.txt').exists():
+                if seq_base in samplesheets:
+                    logger.info(f'downloading sample-sheet for {seq_dir.name}')
+                else:
+                    logger.debug(f'no sample-sheet for {seq_dir.name}...')
+                    continue
 
-                    num_files = 0
-                    uploaded_files = 0
+                client.download_file(
+                    Bucket=S3_BUCKET,
+                    Key=os.path.join('sample-sheets', f'{seq_dir.name}.csv'),
+                    Filename=str(local_samplesheets / f'{seq_dir.name}.csv')
+                )
 
-                    seq_root = os.path.dirname(seq_dir)
-                    for root, dirs, files in os.walk(seq_dir, topdown=True):
-                        num_files += len(files)
-                        synced_files = 0
-                        base_dir = root[(len(seq_root) + 1):]
+                logger.debug('samplesheet downloaded')
 
-                        for file_name in files:
-                            s3_key = os.path.join(S3_BCL_DIR, base_dir,
-                                                  file_name)
-                            if s3_key not in file_set:
-                                logger.debug('uploading {} to {}'.format(
-                                        file_name, s3_key)
-                                )
-                                try:
-                                    client.upload_file(
-                                        Filename=os.path.join(root, file_name),
-                                        Bucket=S3_BUCKET,
-                                        Key=s3_key)
-                                    synced_files += 1
-                                except IOError:
-                                    logger.warning("couldn't read {}".format(
-                                            file_name)
-                                    )
-                                time.sleep(SLEEPY_TIME)
+                logger.info(f'reading samplesheet for {seq_dir.name}')
+                with open(local_samplesheets / f'{seq_dir.name}.csv') as f:
+                    rows = list(csv.reader(f))
 
-                        if synced_files:
-                            logger.debug('synced {} files in {}'.format(
-                                synced_files, root)
-                            )
-                            uploaded_files += synced_files
+                # takes everything up to [Data]+1 line as header
+                h_i = [i for i,r in enumerate(rows) if r[0] == '[Data]'][0]
+                hdr = '\n'.join(','.join(r) for r in rows[:h_i+2])
+                rows = rows[h_i+2:]
 
-                    if (uploaded_files + len(file_set)) == num_files:
-                        logger.info('{} is synced'.format(seq_dir))
-                        upload_set.add(seq_dir)
-                        logger.debug('added {} for upload_set'.format(seq_dir))
+                for i in range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n):
+                    with open(f'{seq_dir.name}_{i}.csv', 'w') as OUT:
+                        print(hdr, file=OUT)
+                        for r in rows[i:i + sample_n]:
+                            print(','.join(r), file=OUT)
 
-                    total_uploads += uploaded_files
+                for i in range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n):
+                    logger.info(f'demuxing batch {i} of {seq_dir}')
+                    subprocess.check_call('reflow run something something')
 
-    logger.info("sync complete")
-    logger.info("{} files uploaded".format(total_uploads))
-
-    return upload_set
+    logger.info('scan complete')
 
 
 if __name__ == "__main__":
     # check for an existing process running
     maybe_exit_process()
 
-    mainlogger = logging.getLogger(__name__)
-    mainlogger.setLevel(logging.DEBUG)
-
-    # create a logging format
-    formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    mainlogger = ut_log.get_trfh_logger(
+        'demuxer',
+        (info_log_file, logging.INFO, 'W0', 10),
+        (debug_log_file, logging.DEBUG, 'midnight', 3)
     )
 
-    info_log_file = '/home/utility/flexo_watcher.log'
-    info_handler = TimedRotatingFileHandler(info_log_file, when='W0',
-                                            backupCount=10)
-    info_handler.setLevel(logging.INFO)
-
-    debug_log_file = '/home/utility/flexo_debug.log'
-    debug_handler = TimedRotatingFileHandler(debug_log_file, when='midnight',
-                                             backupCount=3)
-    debug_handler.setLevel(logging.DEBUG)
-
-    info_handler.setFormatter(formatter)
-    debug_handler.setFormatter(formatter)
-
-    # add the handlers to the logger
-    mainlogger.addHandler(info_handler)
-    mainlogger.addHandler(debug_handler)
-
-    upload_record_file = '/home/utility/flexo_record.txt'
-    if os.path.exists(upload_record_file):
-        mainlogger.debug('reading record file')
-        with open(upload_record_file) as f:
-            old_upload_set = {line.strip() for line in f}
-    else:
-        mainlogger.debug('no record file exists, syncing everything...')
-        old_upload_set = set()
-
-    mainlogger.info('{} runs recorded as uploaded'.format(len(old_upload_set)))
-
-    updated_upload_set = main(mainlogger, old_upload_set.copy())
-
-    mainlogger.info('synced {} new runs'.format(
-            len(updated_upload_set) - len(old_upload_set))
+    mainlogger.debug('Checking bucket for existing fastq folders')
+    fastq_folders = {
+        fn.split('/', 2)[1] for fn in
+        s3u.get_files(bucket=S3_BUCKET, prefix='fastqs')
+    }
+    mainlogger.info(
+        f'{len(fastq_folders)} folders in s2://{S3_BUCKET}/fastqs'
     )
-    with open(upload_record_file, 'w') as OUT:
-        print('\n'.join(sorted(updated_upload_set)), file=OUT)
 
-    mainlogger.debug('wrote new record file')
+    mainlogger.debug('Getting the list of sample-sheets')
+    samplesheets = [
+        os.path.splitext(os.path.basename(fn))[0] for fn in
+        s3u.get_files(bucket=S3_BUCKET, prefix='sample-sheets')
+    ]
+    mainlogger.info(
+        f'{len(samplesheets)} samplesheets in s3://{S3_BUCKET}/sample-sheets'
+    )
+
+    main(mainlogger, fastq_folders, samplesheets)
