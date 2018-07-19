@@ -47,7 +47,7 @@ debug_log_file = pathlib.Path('/home/seqbot/flexo_debug.log')
 
 def maybe_exit_process():
     # get all python pids
-    pids = subprocess.check_output("pgrep python", shell=True).split()
+    pids = subprocess.check_output("pgrep python", shell=True).decode().split()
 
     cmds = 0
     for pid in pids:
