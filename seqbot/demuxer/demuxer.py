@@ -75,7 +75,7 @@ def main(logger, demux_set, samplesheets):
     # for each sequencer, check for newly completed runs
     for seq in SEQS:
         logger.info(seq)
-        fns = (root_dir / seq).glob(f'[0-9]*/{SEQ_FILES[seq]}')
+        fns = list((root_dir / seq).glob(f'[0-9]*/{SEQ_FILES[seq]}'))
         logger.debug(f'{len(fns)} ~complete runs in {root_dir / seq}')
 
         for fn in fns:
