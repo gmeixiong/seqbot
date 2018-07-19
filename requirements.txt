@@ -1,5 +1,5 @@
 awscli-cwlogs
 botocore
 boto3
-git+https://github.com/czbiohub/utilities
+utilities
 numpy
