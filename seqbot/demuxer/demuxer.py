@@ -10,6 +10,7 @@
 
 import csv
 import glob
+import io
 import logging
 import os
 import pathlib
@@ -92,16 +93,16 @@ def main(logger, demux_set, samplesheets):
                     logger.debug(f'no sample-sheet for {seq_dir.name}...')
                     continue
 
-                client.download_file(
-                    Bucket=S3_BUCKET, Key=f'sample-sheets/{seq_dir.name}.csv',
-                    Filename=str(local_samplesheets / f'{seq_dir.name}.csv')
+                fb = io.BytesIO()
+
+                client.download_fileobj(
+                        Bucket=S3_BUCKET,
+                        Key=f'sample-sheets/{seq_dir.name}.csv',
+                        Fileobj=fb
                 )
-
-                logger.debug('samplesheet downloaded')
-
                 logger.info(f'reading samplesheet for {seq_dir.name}')
-                with open(local_samplesheets / f'{seq_dir.name}.csv') as f:
-                    rows = list(csv.reader(f))
+                fb.seek(0)
+                rows = list(csv.reader(fb))
 
                 # takes everything up to [Data]+1 line as header
                 h_i = [i for i,r in enumerate(rows) if r[0] == '[Data]'][0]
@@ -109,7 +110,7 @@ def main(logger, demux_set, samplesheets):
                 rows = rows[h_i+2:]
 
                 for i in range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n):
-                    with open(f'{seq_dir.name}_{i}.csv', 'w') as OUT:
+                    with open(local_samplesheets / f'{seq_dir.name}_{i}.csv', 'w') as OUT:
                         print(hdr, file=OUT)
                         for r in rows[i:i + sample_n]:
                             print(','.join(r), file=OUT)
