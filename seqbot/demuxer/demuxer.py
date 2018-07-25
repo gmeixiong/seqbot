@@ -35,16 +35,17 @@ SEQ_FILES = {'MiSeq-01'  : 'RTAComplete.txt',
              'NovaSeq-01': 'SequenceComplete.txt'}
 
 S3_BUCKET = 'czbiohub-seqbot'
+S3_OUTPUT = 'czb-seqbot'
 S3_FASTQS_DIR = 'fastqs'
-
-
+DEMUX_COMMAND = ['reflow', 'run' '-local',
+                 '/home/seqbot/reflow-workflows/demux.rf']
 
 sample_n = 384
 local_samplesheets = pathlib.Path('/home/seqbot/samplesheets')
 demux_cache = pathlib.Path('/home/seqbot/demux_cached_list.txt')
 
-info_log_file = pathlib.Path('/home/seqbot/flexo_watcher.log')
-debug_log_file = pathlib.Path('/home/seqbot/flexo_debug.log')
+info_log_file = pathlib.Path('/home/seqbot/demuxer.log')
+debug_log_file = pathlib.Path('/home/seqbot/demuxer_debug.log')
 
 
 def maybe_exit_process():
@@ -81,32 +82,48 @@ def main(logger, demux_set, samplesheets):
 
         for fn in fns:
             seq_dir = fn.parent
-            seq_base = seq_dir.name
             if seq_dir.name in demux_set:
                 logger.debug(f'skipping {seq_dir.name}, already demuxed')
                 continue
 
             if seq != 'NovaSeq-01' or (seq_dir / 'CopyComplete.txt').exists():
-                if seq_base in samplesheets:
+                if seq_dir.name in samplesheets:
                     logger.info(f'downloading sample-sheet for {seq_dir.name}')
                 else:
-                    logger.debug(f'no sample-sheet for {seq_dir.name}...')
+                    logger.debug(f'skipping {seq_dir.name}, no sample-sheet')
                     continue
 
                 fb = io.BytesIO()
 
                 client.download_fileobj(
-                        Bucket=S3_BUCKET,
-                        Key=f'sample-sheets/{seq_dir.name}.csv',
-                        Fileobj=fb
+                    Bucket=S3_BUCKET,
+                    Key=f'sample-sheets/{seq_dir.name}.csv',
+                    Fileobj=fb
                 )
                 logger.info(f'reading samplesheet for {seq_dir.name}')
                 rows = list(csv.reader(io.StringIO(fb.getvalue().decode())))
 
                 # takes everything up to [Data]+1 line as header
                 h_i = [i for i,r in enumerate(rows) if r[0] == '[Data]'][0]
+                split_lanes = 'Lane' in rows[h_i+1]
+
+                if 'index' in rows[h_i+1]:
+                    index_i = rows[h_i+1].index('index')
+                else:
+                    logger.warn("Samplesheet doesn't contain an index column,"
+                                " skipping!")
+                    continue
+
+                # hacky way to check for cellranger indexes:
+                cellranger = rows[h_i+2][index_i].startswith('SI-')
+
                 hdr = '\n'.join(','.join(r) for r in rows[:h_i+2])
+
                 rows = rows[h_i+2:]
+                batched = len(rows) > sample_n
+
+                if cellranger and (split_lanes or batched):
+                    logger.warn("Cellranger workflow won't use extra options")
 
                 for i in range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n):
                     with open(local_samplesheets / f'{seq_dir.name}_{i}.csv', 'w') as OUT:
@@ -116,7 +133,25 @@ def main(logger, demux_set, samplesheets):
 
                 for i in range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n):
                     logger.info(f'demuxing batch {i} of {seq_dir}')
-                    subprocess.check_call('reflow run something something')
+                    demux_cmd = DEMUX_COMMAND[:]
+                    demux_cmd.extend(
+                        (f'{local_samplesheets / seq_dir.name}_{i}.csv',
+                         f'{seq_dir}',
+                         f's3://{S3_OUTPUT}/{S3_FASTQS_DIR}'),
+                    )
+
+                    if not split_lanes:
+                        demux_cmd.append('--no_lane_splitting')
+
+                    if batched:
+                        demux_cmd.append('--no_undetermined')
+
+                    if cellranger:
+                        demux_cmd.append('--cellranger')
+
+                    logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
+
+                    subprocess.check_call(' '.join(demux_cmd), shell=True)
 
                 demux_set.add(seq_dir.name)
 
@@ -142,11 +177,11 @@ if __name__ == "__main__":
         mainlogger.debug('no cache file exists, querying S3...')
         demux_set = {
             fn.split('/', 2)[1] for fn in
-            s3u.get_files(bucket=S3_BUCKET, prefix='fastqs')
+            s3u.get_files(bucket=S3_OUTPUT, prefix=S3_FASTQS_DIR)
         }
 
     mainlogger.info(
-        f'{len(demux_set)} folders in s3://{S3_BUCKET}/fastqs'
+        f'{len(demux_set)} folders in s3://{S3_OUTPUT}/{S3_FASTQS_DIR}'
     )
 
     mainlogger.debug('Getting the list of sample-sheets')
