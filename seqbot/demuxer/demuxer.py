@@ -157,19 +157,22 @@ def main(logger:logging.Logger, demux_set:set, samplesheets:set):
                     logger.info(f'demuxing batch {i} of {seq_dir}')
                     demux_cmd = config['demux']['command_template'][:]
                     demux_cmd.extend(
-                        (f'{local_samplesheets / seq_dir.name}_{i}.csv',
+                        ('-bcl_path',
                          f'{seq_dir}',
-                         f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}')
+                         '-output_path',
+                         f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}',
+                         '-samplesheet',
+                         f'{local_samplesheets / seq_dir.name}_{i}.csv')
                     )
 
                     if not split_lanes:
-                        demux_cmd.append('--no_lane_splitting')
+                        demux_cmd.append('-no_lane_splitting')
 
                     if batched:
-                        demux_cmd.append('--no_undetermined')
+                        demux_cmd.append('-no_undetermined')
 
                     if cellranger:
-                        demux_cmd.append('--cellranger')
+                        demux_cmd.append('-cellranger')
 
                     logger.debug(f"running command:\n\t{' '.join(demux_cmd)}")
 
