@@ -103,23 +103,26 @@ def main(logger, demux_set, samplesheets):
                 logger.info(f'reading samplesheet for {seq_dir.name}')
                 rows = list(csv.reader(io.StringIO(fb.getvalue().decode())))
 
-                # takes everything up to [Data]+1 line as header
+                # find the [Data] section to check format
                 h_i = [i for i,r in enumerate(rows) if r[0] == '[Data]'][0]
-                split_lanes = 'Lane' in rows[h_i+1]
+                h_row = list(map(str.lower, rows[h_i + 1]))
 
-                if 'index' in rows[h_i+1]:
-                    index_i = rows[h_i+1].index('index')
+                # if there's a lane column, we'll split lanes
+                split_lanes = 'lane' in h_row
+
+                if 'index' in h_row:
+                    index_i = h_row.index('index')
                 else:
                     logger.warn("Samplesheet doesn't contain an index column,"
                                 " skipping!")
                     continue
 
                 # hacky way to check for cellranger indexes:
-                cellranger = rows[h_i+2][index_i].startswith('SI-')
+                cellranger = rows[h_i + 2][index_i].startswith('SI-')
 
-                hdr = '\n'.join(','.join(r) for r in rows[:h_i+2])
-
-                rows = rows[h_i+2:]
+                # takes everything up to [Data]+1 line as header
+                hdr = '\n'.join(','.join(r) for r in rows[:h_i + 2])
+                rows = rows[h_i + 2:]
                 batched = len(rows) > sample_n
 
                 if cellranger and (split_lanes or batched):
