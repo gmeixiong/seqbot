@@ -42,7 +42,7 @@ DEMUX_COMMAND = ['reflow', 'run' '-local',
 
 sample_n = 384
 local_samplesheets = pathlib.Path('/home/seqbot/samplesheets')
-demux_cache = pathlib.Path('/home/seqbot/demux_cached_list.txt')
+demux_cache = pathlib.Path('/home/seqbot/demuxer_cached_list.txt')
 
 info_log_file = pathlib.Path('/home/seqbot/demuxer.log')
 debug_log_file = pathlib.Path('/home/seqbot/demuxer_debug.log')
