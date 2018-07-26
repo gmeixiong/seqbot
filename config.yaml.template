@@ -1,0 +1,29 @@
+cache:
+  demuxed: /path/to/cachefile
+  samplesheet_dir: /path/to/samplesheet
+demux:
+  command_template: ["reflow", "run", "-local", "/path/to/reflowscript"]
+  sample_n: 384
+dobby:
+  addresses_to_email:
+  - sequencing.person@your.org
+  - another.person@your.org
+  password: "your seqbot's email password"
+  username: seqbot.email@your.org
+logging:
+  info: /path/to/info.log
+  debug: /path/to/debug.log
+s3:
+  fastq_prefix: directory_for_fastqs
+  output_bucket: your-bucket
+  samplesheet_bucket: your-other-bucket
+seqs:
+  base: /path/to/sequencers
+  dirs:
+  - MiSeq-01
+  - NextSeq-01
+  - NovaSeq-01
+  sentinels:
+    MiSeq-01: RTAComplete.txt
+    NextSeq-01: RunCompletionStatus.xml
+    NovaSeq-01: SequenceComplete.txt
