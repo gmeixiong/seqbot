@@ -2,7 +2,7 @@
 
 
 # script to:
-#   - scan SEQS folders
+#   - scan sequencer folders
 #   - check for completed runs
 #   - demultiplex the run
 #   - upload fastq files to S3 when completed
@@ -14,10 +14,13 @@ import io
 import logging
 import os
 import pathlib
+import smtplib
 import subprocess
 import sys
 import time
+import yaml
 
+from email.mime.text import MIMEText
 from logging.handlers import TimedRotatingFileHandler
 
 import boto3
@@ -26,27 +29,20 @@ import utilities.log_util as ut_log
 import utilities.s3_util as s3u
 
 
-root_dir = pathlib.Path('/mnt/SEQS')
-SEQS = ['MiSeq-01', 'NextSeq-01', 'NovaSeq-01']
+config_file = pathlib.Path('/home/seqbot/seqbot/config.yaml')
 
-# I believe these are the correct files for each sequencer
-SEQ_FILES = {'MiSeq-01'  : 'RTAComplete.txt',
-             'NextSeq-01': 'RunCompletionStatus.xml',
-             'NovaSeq-01': 'SequenceComplete.txt'}
+with open(config_file) as f:
+    config = yaml.load(f)
 
-S3_BUCKET = 'czbiohub-seqbot'
-S3_OUTPUT = 'czb-seqbot'
-S3_FASTQS_DIR = 'fastqs'
-DEMUX_COMMAND = ['reflow', 'run' '-local',
-                 '/home/seqbot/reflow-workflows/demux.rf']
+# location where sequencer data gets written
+SEQ_DIR = pathlib.Path(config['seqs']['base'])
 
-sample_n = 384
-local_samplesheets = pathlib.Path('/home/seqbot/samplesheets')
-demux_cache = pathlib.Path('/home/seqbot/demuxer_cached_list.txt')
+# number of samples to batch when dealing with very large runs
+sample_n = config['demux']['sample_n']
 
-info_log_file = pathlib.Path('/home/seqbot/demuxer.log')
-debug_log_file = pathlib.Path('/home/seqbot/demuxer_debug.log')
-
+# cache files
+local_samplesheets = pathlib.Path(config['cache']['samplesheet_dir'])
+demux_cache = pathlib.Path(config['cache']['demuxed'])
 
 def maybe_exit_process():
     # get all python pids
@@ -68,17 +64,40 @@ def maybe_exit_process():
         time.sleep(5)
 
 
-def main(logger, demux_set, samplesheets):
+def demux_mail(run_name:str):
+    msg = MIMEText(
+f'''Results are located in:
+    s3://{config["s3"]://["output_bucket"]/["fastq_prefix"]}/{run_name}
+
+- seqbot
+''')
+
+    msg['Subject'] = f'[Seqbot] demux for {run_name} is complete!'
+    msg['From'] = config['email']['username']
+    msg['To'] = ','.join(config['email']['addresses_to_email'])
+
+    with smtplib.SMTP('smtp.gmail.com', port=587) as smtp:
+        smtp.ehlo()
+        smtp.starttls()
+        smtp.ehlo()
+        smtp.login(config['email']['username'], config['email']['password'])
+
+        smtp.send_message(msg)
+
+
+def main(logger:logging.Logger, demux_set:set, samplesheets:set):
     logger.debug("Creating S3 client")
     client = boto3.client('s3')
 
-    logger.info("Scanning {}...".format(root_dir))
+    logger.info("Scanning {}...".format(SEQ_DIR))
 
     # for each sequencer, check for newly completed runs
-    for seq in SEQS:
+    for seq in config['seqs']['dirs']:
         logger.info(seq)
-        fns = list((root_dir / seq).glob(f'[0-9]*/{SEQ_FILES[seq]}'))
-        logger.debug(f'{len(fns)} ~complete runs in {root_dir / seq}')
+        fns = list((SEQ_DIR / seq).glob(
+                f'[0-9]*/{config["seqs"]["sentinels"][seq]}')
+        )
+        logger.debug(f'{len(fns)} ~complete runs in {SEQ_DIR / seq}')
 
         for fn in fns:
             seq_dir = fn.parent
@@ -96,7 +115,7 @@ def main(logger, demux_set, samplesheets):
                 fb = io.BytesIO()
 
                 client.download_fileobj(
-                    Bucket=S3_BUCKET,
+                    Bucket=config['s3']['samplesheet_bucket'],
                     Key=f'sample-sheets/{seq_dir.name}.csv',
                     Fileobj=fb
                 )
@@ -113,7 +132,7 @@ def main(logger, demux_set, samplesheets):
                 if 'index' in h_row:
                     index_i = h_row.index('index')
                 else:
-                    logger.warn("Samplesheet doesn't contain an index column,"
+                    logger.warning("Samplesheet doesn't contain an index column,"
                                 " skipping!")
                     continue
 
@@ -126,7 +145,7 @@ def main(logger, demux_set, samplesheets):
                 batched = len(rows) > sample_n
 
                 if cellranger and (split_lanes or batched):
-                    logger.warn("Cellranger workflow won't use extra options")
+                    logger.warning("Cellranger workflow won't use extra options")
 
                 for i in range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n):
                     with open(local_samplesheets / f'{seq_dir.name}_{i}.csv', 'w') as OUT:
@@ -136,11 +155,11 @@ def main(logger, demux_set, samplesheets):
 
                 for i in range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n):
                     logger.info(f'demuxing batch {i} of {seq_dir}')
-                    demux_cmd = DEMUX_COMMAND[:]
+                    demux_cmd = config['demux']['command_template'][:]
                     demux_cmd.extend(
                         (f'{local_samplesheets / seq_dir.name}_{i}.csv',
                          f'{seq_dir}',
-                         f's3://{S3_OUTPUT}/{S3_FASTQS_DIR}'),
+                         f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}')
                     )
 
                     if not split_lanes:
@@ -156,6 +175,8 @@ def main(logger, demux_set, samplesheets):
 
                     subprocess.check_call(' '.join(demux_cmd), shell=True)
 
+                logger.info('Sending notification email')
+                demux_mail(seq_dir.name)
                 demux_set.add(seq_dir.name)
 
     logger.info('scan complete')
@@ -168,8 +189,8 @@ if __name__ == "__main__":
 
     mainlogger = ut_log.get_trfh_logger(
         'demuxer',
-        (info_log_file, logging.INFO, 'W0', 10),
-        (debug_log_file, logging.DEBUG, 'midnight', 3)
+        (config['logging']['info'], logging.INFO, 'W0', 10),
+        (config['logging']['debug'], logging.DEBUG, 'midnight', 3)
     )
 
     if demux_cache.exists():
@@ -180,20 +201,24 @@ if __name__ == "__main__":
         mainlogger.debug('no cache file exists, querying S3...')
         demux_set = {
             fn.split('/', 2)[1] for fn in
-            s3u.get_files(bucket=S3_OUTPUT, prefix=S3_FASTQS_DIR)
+            s3u.get_files(bucket=config['s3']['output_bucket'],
+                          prefix=config['s3']['fastq_prefix'])
         }
 
     mainlogger.info(
-        f'{len(demux_set)} folders in s3://{S3_OUTPUT}/{S3_FASTQS_DIR}'
+        f'{len(demux_set)} folders in '
+        f's3://{config["s3"]["output_bucket"]}/{config["s3"]["fastq_prefix"]}'
     )
 
     mainlogger.debug('Getting the list of sample-sheets')
-    samplesheets = [
+    samplesheets = {
         os.path.splitext(os.path.basename(fn))[0] for fn in
-        s3u.get_files(bucket=S3_BUCKET, prefix='sample-sheets')
-    ]
+        s3u.get_files(bucket=config['s3']['samplesheet_bucket'],
+                      prefix='sample-sheets')
+    }
     mainlogger.info(
-        f'{len(samplesheets)} samplesheets in s3://{S3_BUCKET}/sample-sheets'
+        f'{len(samplesheets)} samplesheets in '
+        f's3://{config["s3"]["samplesheet_bucket"]}/sample-sheets'
     )
 
     updated_demux_set = main(mainlogger, demux_set.copy(), samplesheets)

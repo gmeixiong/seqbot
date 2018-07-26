@@ -2,9 +2,13 @@ cache:
   demuxed: /path/to/cachefile
   samplesheet_dir: /path/to/samplesheet
 demux:
-  command_template: ["reflow", "run", "-local", "/path/to/reflowscript"]
+  command_template:
+  - /usr/local/bin/reflow
+  - run
+  - "-local"
+  - /path/to/reflowscript
   sample_n: 384
-dobby:
+email:
   addresses_to_email:
   - sequencing.person@your.org
   - another.person@your.org
