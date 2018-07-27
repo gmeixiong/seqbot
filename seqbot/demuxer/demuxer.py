@@ -169,7 +169,7 @@ def main(logger:logging.Logger, demux_set:set, samplesheets:set):
                         demux_cmd.append('-no_lane_splitting')
 
                     if batched:
-                        demux_cmd.append('-no_undetermined')
+                        demux_cmd.extend(('-batch_runID', i+1))
 
                     if cellranger:
                         demux_cmd.append('-cellranger')
