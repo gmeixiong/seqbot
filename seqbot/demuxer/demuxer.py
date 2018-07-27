@@ -147,13 +147,13 @@ def main(logger:logging.Logger, demux_set:set, samplesheets:set):
                 if cellranger and (split_lanes or batched):
                     logger.warning("Cellranger workflow won't use extra options")
 
-                for i in range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n):
+                for i,j in enumerate(range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n)):
                     with open(local_samplesheets / f'{seq_dir.name}_{i}.csv', 'w') as OUT:
                         print(hdr, file=OUT)
-                        for r in rows[i:i + sample_n]:
+                        for r in rows[j:j + sample_n]:
                             print(','.join(r), file=OUT)
 
-                for i in range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n):
+                for i,j in enumerate(range(0, len(rows) + int(len(rows) % sample_n > 0), sample_n)):
                     logger.info(f'demuxing batch {i} of {seq_dir}')
                     demux_cmd = config['demux']['command_template'][:]
                     demux_cmd.extend(
