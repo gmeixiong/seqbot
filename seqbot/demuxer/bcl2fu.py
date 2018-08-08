@@ -85,7 +85,7 @@ def cbcl_globber(bcl_path):
                 break
 
         cbcl_filter_list = glob.glob(
-                os.path.join(args.bcl_path, 'Data', 'Intensities', 'BaseCalls',
+                os.path.join(bcl_path, 'Data', 'Intensities', 'BaseCalls',
                              'L00{}'.format(lane),
                              's_{}_*.filter'.format(lane))
         )

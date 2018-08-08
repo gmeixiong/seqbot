@@ -1,0 +1,18 @@
+param (
+	// python_script string
+	// novaseq_folder string
+	docker_image = "gmeixiong/bcl2fastq"
+)
+
+val dirs = make("$/dirs")
+
+func bcl2fastqRun(python_script file, novaseq_folder dir) dir = 
+	exec(image := docker_image) (outdir dir) {"
+		python {{python_script}} --bcl_path {{novaseq_folder}} --output_dir {{outdir}} --index_cycle_start 1 --index_cycle_end 124
+	"}
+
+val bcl2fastq = bcl2fastqRun(file("./read_extraction.py"), dir("s3://czbiohub-seqbot/bcl/180806_A00111_0181_AHFW7GDMXX"))
+
+
+@requires(cpu := 8, mem := 32*GiB, disk := 200*GiB)
+val Main = dirs.Copy(bcl2fastq, "s3://gmeixiong-bucket/bcl2fastq")
