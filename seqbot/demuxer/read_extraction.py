@@ -13,7 +13,7 @@ from collections import defaultdict
 
 import multiprocessing as mp
 
-import seqbot.demuxer.bcl2fu as bcl2fu
+import bcl2fu as bcl2fu
 
 # import utilities.log_util as ut_log
 
