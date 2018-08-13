@@ -13,31 +13,30 @@ import numpy as np
 
 
 cbcl_info = namedtuple('CBCL', ('version', 'header_size', 'bits_per_basecall',
-                                'bits_per_qscore', 'number_of_bins', 'bins',
-                                'number_of_tile_records', 'tile_offsets',
+                                'bits_per_qscore', 'num_bins', 'bins',
+                                'num_tiles', 'tiles',
                                 'non_PF_clusters_excluded'))
 
 get_cycle = lambda cfn: int(os.path.basename(os.path.dirname(cfn))[1:-2])
 get_part = lambda cfn: int(os.path.basename(cfn)[2])
 get_tile = lambda cfn: int(os.path.basename(cfn)[4:8])
 
+def read_cbcl_headers(cbcl_files):
+    cbcl_headers = dict()
 
-
-def read_cbcl_data(cbcl_files):
-    cbcl_file_data = dict()
-
-    for fn in cbcl_files:
-        with open(fn, 'rb') as f:
-            version, header_size, bits_per_basecall, bits_per_qscore, number_of_bins = struct.unpack(
+    for cbcl_file in cbcl_files:
+        with open(cbcl_file, 'rb') as f:
+            version, header_size, bits_per_basecall, bits_per_qscore, num_bins = struct.unpack(
                 '<HIBBI', f.read(12))
             bins = np.fromfile(
-                    f, dtype=np.uint32, count=2*number_of_bins
-            ).reshape((number_of_bins, 2))
+                    f, dtype=np.uint32, count=2*num_bins
+            ).reshape((num_bins, 2))
 
-            number_of_tile_records = struct.unpack('<I', f.read(4))[0]
-            tile_offsets = np.fromfile(
-                f, dtype=np.uint32, count=4*number_of_tile_records
-            ).reshape((number_of_tile_records, 4))
+            num_tiles = struct.unpack('<I', f.read(4))[0]
+            # Each row in tiles comprises the tile number, num clusters in block, uncompressed block size, and compressed block size of the tile. 
+            tiles = np.fromfile(
+                f, dtype=np.uint32, count=4*num_tiles
+            ).reshape((num_tiles, 4))
 
             non_PF_clusters_excluded = bool(struct.unpack('B', f.read(1))[0])
 
@@ -45,26 +44,26 @@ def read_cbcl_data(cbcl_files):
                                            header_size,
                                            bits_per_basecall,
                                            bits_per_qscore,
-                                           number_of_bins,
+                                           num_bins,
                                            bins,
-                                           number_of_tile_records,
-                                           tile_offsets,
+                                           num_tiles,
+                                           tiles,
                                            non_PF_clusters_excluded)
 
     return cbcl_file_data
 
 
-def read_cbcl_filters(filter_files):
-    cbcl_filters = dict()
+def read_lane_filters(lane_filters):
+    lane_filters = dict()
 
-    for fn in filter_files:
-        with open(fn, 'rb') as f:
-            zv, filter_version, n_clusters = struct.unpack('<III', f.read(12))
-            pf = np.fromfile(f, dtype=np.uint8, count=n_clusters)
+    for tile_filter in lane_filters:
+        with open(tile_filter, 'rb') as f:
+            zv, filter_version, num_clusters = struct.unpack('III', f.read(12))
+            pf = np.fromfile(f, dtype=np.uint8, count=num_clusters)
 
-            cbcl_filters[get_tile(fn)] = (pf & 0b1).astype(bool)
+            lane_filters[get_tile(tile_filter)] = (pf & 0b1).astype(bool)
 
-    return cbcl_filters
+    return lane_filters
 
 
 def cbcl_globber(bcl_path):
